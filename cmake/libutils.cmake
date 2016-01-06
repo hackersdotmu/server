@@ -57,16 +57,6 @@ IF(WIN32 OR CYGWIN OR APPLE OR WITH_PIC OR DISABLE_SHARED OR NOT CMAKE_SHARED_LI
  SET(_SKIP_PIC 1)
 ENDIF()
 
-# Systems that support -Wl,-whole-archive or similar option do not need
-# can use this to prevent linker from removing code in static libraries
-IF(CMAKE_SYSTEM_NAME MATCHES "Linux" OR CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
- SET(LINK_OPTION_WHOLE_ARCHIVE -Wl,-whole-archive)
- SET(LINK_OPTION_NO_WHOLE_ARCHIVE -Wl,-no-whole-archive)
-ELSE()
- SET(LINK_OPTION_WHOLE_ARCHIVE)
- SET(LINK_OPTION_NO_WHOLE_ARCHIVE)
-ENDIF()
-
 INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/cmake_parse_arguments.cmake)
 # CREATE_EXPORT_FILE (VAR target api_functions)
 # Internal macro, used to create source file for shared libraries that 
@@ -75,12 +65,8 @@ INCLUDE(${MYSQL_CMAKE_SCRIPT_DIR}/cmake_parse_arguments.cmake)
 # that references all exports and this prevents linker from creating an 
 # empty library(there are unportable alternatives, --whole-archive)
 MACRO(CREATE_EXPORT_FILE VAR TARGET API_FUNCTIONS)
-  IF(LINK_OPTION_WHOLE_ARCHIVE)
-    SET(DUMMY ${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_dummy.cc)
-    CONFIGURE_FILE_CONTENT("" ${DUMMY})
-    SET(${VAR} ${DUMMY})
-  ELSEIF(WIN32)
-    SET(DUMMY ${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_dummy.cc)
+  IF(WIN32)
+    SET(DUMMY ${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_dummy.c)
     SET(EXPORTS ${CMAKE_CURRENT_BINARY_DIR}/${TARGET}_exports.def)
     CONFIGURE_FILE_CONTENT("" ${DUMMY})
     SET(CONTENT "EXPORTS\n")
@@ -277,8 +263,7 @@ MACRO(MERGE_LIBRARIES)
     IF (ARG_SOVERSION)
       SET_TARGET_PROPERTIES(${TARGET} PROPERTIES SOVERSION  ${ARG_VERSION})
     ENDIF()
-    TARGET_LINK_LIBRARIES(${TARGET} 
-       ${LINK_OPTION_WHOLE_ARCHIVE} ${LIBS} ${LINK_OPTION_NO_WHOLE_ARCHIVE})
+    TARGET_LINK_LIBRARIES(${TARGET} ${LIBS})
     IF(ARG_OUTPUT_NAME)
       SET_TARGET_PROPERTIES(${TARGET} PROPERTIES OUTPUT_NAME "${ARG_OUTPUT_NAME}")
     ENDIF()
