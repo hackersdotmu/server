@@ -38,7 +38,9 @@
 #include "client_priv.h"
 #include <mysql_version.h>
 #include <mysqld_error.h>
+#ifndef HAVE_LIBMARIADB
 #include <sql_common.h>
+#endif
 #include <m_ctype.h>
 #include <my_dir.h>
 #include <hash.h>
@@ -264,6 +266,10 @@ static char *get_string(char **to_ptr, char **from_ptr,
 static int replace(DYNAMIC_STRING *ds_str,
                    const char *search_str, ulong search_len,
                    const char *replace_str, ulong replace_len);
+
+#ifdef HAVE_LIBMARIADB
+extern "C" void ma_pvio_close(MARIADB_PVIO *);
+#endif
 
 static uint opt_protocol=0;
 
@@ -4394,9 +4400,11 @@ void do_send_quit(struct st_command *command)
 
   if (!(con= find_connection_by_name(name)))
     die("connection '%s' not found in connection pool", name);
-
+#ifndef HAVE_LIBMARIADB
   simple_command(con->mysql,COM_QUIT,0,0,1);
-
+#else
+  con->mysql->methods->db_command(con->mysql, COM_QUIT, 0, 0, 1, 0);
+#endif
   DBUG_VOID_RETURN;
 }
 
@@ -5500,12 +5508,20 @@ void do_close_connection(struct st_command *command)
 #ifndef EMBEDDED_LIBRARY
   if (command->type == Q_DIRTY_CLOSE)
   {
+#ifndef HAVE_LIBMARIADB    
     if (con->mysql->net.vio)
     {
       vio_delete(con->mysql->net.vio);
       con->mysql->net.vio = 0;
     }
+#else
+    if (con->mysql->net.pvio)
+    {
+      ma_pvio_close(con->mysql->net.pvio);
+      con->mysql->net.pvio = 0;
+    }
   }
+#endif  
 #endif /*!EMBEDDED_LIBRARY*/
   if (con->stmt)
     do_stmt_close(con);
@@ -8230,10 +8246,14 @@ end:
   revert_properties();
 
   /* Close the statement if reconnect, need new prepare */
-  if (mysql->reconnect)
   {
-    mysql_stmt_close(stmt);
-    cn->stmt= NULL;
+    my_bool reconnect;
+    mysql_get_option(mysql, MYSQL_OPT_RECONNECT, &reconnect);
+    if (reconnect)
+    {
+      mysql_stmt_close(stmt);
+      cn->stmt= NULL;
+    }
   }
 
   DBUG_VOID_RETURN;

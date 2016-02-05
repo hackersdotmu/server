@@ -321,6 +321,7 @@ MK_WRAPPER(
   mysql,
   mysql)
 
+#ifdef HAVE_DEPRECATED_ASYNC_API  
 MK_WRAPPER(
   MYSQL_RES *,
   mysql_list_dbs,
@@ -356,6 +357,7 @@ MK_WRAPPER(
   (mysql, table, wild),
   mysql,
   mysql)
+#endif /* HAVE_DEPRECATED_ASYNC_API */
 
 MK_WRAPPER(
   my_bool,

@@ -6,7 +6,7 @@
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; version 2 of the License.
-
+   
    This program is distributed in the hope that it will be useful,
    but WITHOUT ANY WARRANTY; without even the implied warranty of
    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -53,6 +53,7 @@ const char *VER= "15.1";
 
 /* Buffer to hold 'version' and 'version_comment' */
 static char *server_version= NULL;
+static char *client_version= NULL;
 
 /* Array of options to pass to libemysqld */
 #define MAX_SERVER_ARGS               64
@@ -148,7 +149,8 @@ static my_bool debug_info_flag, debug_check_flag, batch_abort_on_error;
 static my_bool column_types_flag;
 static my_bool preserve_comments= 0;
 static my_bool in_com_source, aborted= 0;
-#ifdef LIBMARIADB
+#ifdef HAVE_LIBMARIADB
+extern "C" mysql_mutex_t THR_LOCK_charset;
 static size_t opt_max_allowed_packet, opt_net_buffer_length;
 #else
 static ulong opt_max_allowed_packet, opt_net_buffer_length;
@@ -234,6 +236,7 @@ static int read_and_execute(bool interactive);
 static int sql_connect(char *host,char *database,char *user,char *password,
 		       uint silent);
 static const char *server_version_string(MYSQL *mysql);
+static const char *client_version_string();
 static int put_info(const char *str,INFO_TYPE info,uint error=0,
 		    const char *sql_state=0);
 static int put_error(MYSQL *mysql);
@@ -1126,10 +1129,17 @@ static bool real_binary_mode= FALSE;
 int main(int argc,char *argv[])
 {
   char buff[80];
+  int rc= 1;
 
-  MY_INIT(argv[0]);
   DBUG_ENTER("main");
   DBUG_PROCESS(argv[0]);
+#ifdef HAVE_LIBMARIADB
+  mysql_library_init(0,0,0);
+  mysql_mutex_init(key_THR_LOCK_charset, &THR_LOCK_charset, MY_MUTEX_INIT_FAST);
+  my_progname= argv[0];
+#else
+  MY_INIT(argv[0]);
+#endif
   
   charset_index= get_command_index('C');
   delimiter_index= get_command_index('d');
@@ -1176,8 +1186,7 @@ int main(int argc,char *argv[])
 
   if (load_defaults("my",load_default_groups,&argc,&argv))
   {
-    my_end(0);
-    exit(1);
+    goto end;
   }
   defaults_argv=argv;
   if ((status.exit_status= get_options(argc, (char **) argv)))
@@ -1189,16 +1198,14 @@ int main(int argc,char *argv[])
     put_info("Can't initialize batch_readline - may be the input source is "
              "a directory or a block device.", INFO_ERROR, 0);
     free_defaults(defaults_argv);
-    my_end(0);
-    exit(1);
+    goto end;
   }
   if (mysql_server_init(embedded_server_arg_count, embedded_server_args, 
                         (char**) embedded_server_groups))
   {
     put_error(NULL);
     free_defaults(defaults_argv);
-    my_end(0);
-    exit(1);
+    goto end;
   }
   glob_buffer.realloc(512);
   completion_hash_init(&ht, 128);
@@ -1288,7 +1295,17 @@ int main(int argc,char *argv[])
   status.exit_status= read_and_execute(!status.batch);
   if (opt_outfile)
     end_tee();
-  mysql_end(0);
+  rc= 0;
+end:
+#ifdef HAVE_LIBMARIADB
+  mysql_mutex_destroy(&THR_LOCK_charset);
+  mysql_library_end();
+  
+#else
+  my_end(0);
+#endif
+  if (rc)
+    exit(rc);
 #ifndef _lint
   DBUG_RETURN(0);				// Keep compiler happy
 #endif
@@ -1328,6 +1345,7 @@ sig_handler mysql_end(int sig)
   old_buffer.free();
   processed_prompt.free();
   my_free(server_version);
+  my_free(client_version);
   my_free(opt_password);
   my_free(opt_mysql_unix_port);
   my_free(histfile);
@@ -4651,7 +4669,7 @@ sql_real_connect(char *host,char *database,char *user,char *password,
 #ifndef HAVE_LIBMARIADB 
   charset_info= mysql.charset;
 #else
-  charset_info= get_charset_by_name(mysql.charset->csname, MYF(0));
+  charset_info= get_charset_by_name(mysql.charset->name, MYF(0));
 #endif
   
   connected=1;
@@ -4764,6 +4782,7 @@ com_status(String *buffer __attribute__((unused)),
   tee_fprintf(stdout, "Using delimiter:\t%s\n", delimiter);
   tee_fprintf(stdout, "Server:\t\t\t%s\n", mysql_get_server_name(&mysql));
   tee_fprintf(stdout, "Server version:\t\t%s\n", server_version_string(&mysql));
+  tee_fprintf(stdout, "Client version:\t\t%s\n", client_version_string());
   tee_fprintf(stdout, "Protocol version:\t%d\n", mysql_get_proto_info(&mysql));
   tee_fprintf(stdout, "Connection:\t\t%s\n", mysql_get_host_info(&mysql));
   if ((id= mysql_insert_id(&mysql)))
@@ -4836,6 +4855,25 @@ select_limit, max_join_size);
   tee_puts("--------------\n", stdout);
   return 0;
 }
+
+static const char *
+client_version_string()
+{
+  char version[80];
+
+  if (client_version)
+    return client_version;
+
+#ifdef HAVE_LIBMARIADB
+  snprintf(version, 80, "MariaDB Connector/C Version %s", 
+#else
+  snprintf(version, 80, "MySQL client library Version %s", 
+#endif
+           mysql_get_client_info());
+  client_version= strdup(version);
+  return client_version;
+}
+
 
 static const char *
 server_version_string(MYSQL *con)
